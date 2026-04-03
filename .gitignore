@@ -11,6 +11,7 @@ __pycache__/
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
 
@@ -25,6 +26,15 @@ uploads/
 .idea/
 *.swp
 *.swo
+
+# Playwright MCP
+.playwright-mcp/
+
+# Test / build artifacts
+.pytest_cache/
+*.egg-info/
+dist/
+build/
 
 # OS
 .DS_Store
