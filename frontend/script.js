@@ -1,6 +1,14 @@
 // API base URL - use relative path to work from any host
 const API_URL = '/api';
 
+// Theme toggle
+(function initTheme() {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+    }
+})();
+
 // Global state
 let currentSessionId = null;
 
@@ -17,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     courseTitles = document.getElementById('courseTitles');
     
     setupEventListeners();
+    setupThemeToggle();
     createNewSession();
     loadCourseStats();
 });
@@ -43,6 +52,27 @@ function setupEventListeners() {
     });
 }
 
+
+// Theme Toggle
+function setupThemeToggle() {
+    const btn = document.getElementById('themeToggle');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+        if (isLight) {
+            document.documentElement.removeAttribute('data-theme');
+            localStorage.setItem('theme', 'dark');
+            btn.setAttribute('aria-label', 'Switch to light mode');
+        } else {
+            document.documentElement.setAttribute('data-theme', 'light');
+            localStorage.setItem('theme', 'light');
+            btn.setAttribute('aria-label', 'Switch to dark mode');
+        }
+    });
+    // Set initial aria-label
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    btn.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
+}
 
 // Chat Functions
 async function sendMessage() {
