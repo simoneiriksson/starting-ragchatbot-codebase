@@ -1,6 +1,12 @@
 import sys
 import os
 import pytest
+from unittest.mock import MagicMock
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+from typing import List, Optional
 
 # Make backend/ importable from tests/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -64,6 +70,82 @@ def populated_vector_store(temp_chroma_path, sample_course, sample_chunks):
 def empty_vector_store(temp_chroma_path):
     from vector_store import VectorStore
     return VectorStore(temp_chroma_path, "all-MiniLM-L6-v2", max_results=5)
+
+
+# ── API test app and client ───────────────────────────────────────────────────
+#
+# We build a minimal test app that mirrors the real app's routes but without
+# mounting static files (which don't exist in the test environment). The
+# RAGSystem is replaced by a MagicMock so tests stay fast and isolated.
+
+class QueryRequest(BaseModel):
+    query: str
+    session_id: Optional[str] = None
+
+class Source(BaseModel):
+    label: str
+    url: Optional[str] = None
+
+class QueryResponse(BaseModel):
+    answer: str
+    sources: List[Source]
+    session_id: str
+
+class CourseStats(BaseModel):
+    total_courses: int
+    course_titles: List[str]
+
+
+def _build_test_app(mock_rag):
+    """Return a FastAPI test app whose routes delegate to mock_rag."""
+    _app = FastAPI(title="Test RAG App")
+    _app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+    @_app.post("/api/query", response_model=QueryResponse)
+    async def query_documents(request: QueryRequest):
+        try:
+            session_id = request.session_id
+            if not session_id:
+                session_id = mock_rag.session_manager.create_session()
+            answer, sources = mock_rag.query(request.query, session_id)
+            return QueryResponse(answer=answer, sources=sources, session_id=session_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @_app.get("/api/courses", response_model=CourseStats)
+    async def get_course_stats():
+        try:
+            analytics = mock_rag.get_course_analytics()
+            return CourseStats(
+                total_courses=analytics["total_courses"],
+                course_titles=analytics["course_titles"],
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return _app
+
+
+@pytest.fixture
+def mock_rag():
+    """A MagicMock that mimics the RAGSystem interface used by the API layer."""
+    rag = MagicMock()
+
+    # Default happy-path returns
+    rag.session_manager.create_session.return_value = "session_1"
+    rag.query.return_value = ("This is a test answer.", [])
+    rag.get_course_analytics.return_value = {
+        "total_courses": 2,
+        "course_titles": ["Python Basics", "Advanced FastAPI"],
+    }
+    return rag
+
+
+@pytest.fixture
+def api_client(mock_rag):
+    """TestClient wired to the test app with a mock RAGSystem."""
+    test_app = _build_test_app(mock_rag)
+    return TestClient(test_app)
 
 
 # ── Anthropic mock helpers ────────────────────────────────────────────────────
