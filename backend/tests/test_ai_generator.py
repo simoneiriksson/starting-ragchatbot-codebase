@@ -140,8 +140,8 @@ class TestToolUseFlow:
             for block in content
         )
 
-    def test_second_api_call_does_not_include_tools(self, generator, mock_tool_manager):
-        """The follow-up call must NOT pass tools to avoid infinite tool loops."""
+    def test_round2_api_call_includes_tools(self, generator, mock_tool_manager):
+        """The follow-up call within the tool loop must include tools so Claude can chain."""
         first = make_tool_use_response(
             "search_course_content", {"query": "test"}, "toolu_004"
         )
@@ -156,7 +156,84 @@ class TestToolUseFlow:
             )
 
         second_call_kwargs = mock_create.call_args_list[1][1]
-        assert "tools" not in second_call_kwargs
+        assert "tools" in second_call_kwargs
+
+    def test_two_sequential_tool_calls(self, generator, mock_tool_manager):
+        """Claude makes two tool calls in separate rounds before giving a final answer."""
+        first = make_tool_use_response(
+            "search_course_content", {"query": "outline"}, "toolu_010"
+        )
+        second = make_tool_use_response(
+            "search_course_content", {"query": "similar topic"}, "toolu_011"
+        )
+        third = make_text_response("Here is the combined answer.")
+
+        with patch.object(generator.client.messages, "create",
+                          side_effect=[first, second, third]) as mock_create:
+            result = generator.generate_response(
+                query="Find a course similar to lesson 4 of Course X",
+                tools=TOOL_DEFS,
+                tool_manager=mock_tool_manager,
+            )
+
+        assert mock_create.call_count == 3
+        assert mock_tool_manager.execute_tool.call_count == 2
+        assert result == "Here is the combined answer."
+        # Both follow-up calls within the loop include tools (rounds 1 and 2 are both < MAX_TOOL_ROUNDS)
+        assert "tools" in mock_create.call_args_list[1][1]
+        assert "tools" in mock_create.call_args_list[2][1]
+
+    def test_terminates_after_max_rounds_force_text_call(self, generator, mock_tool_manager):
+        """After MAX_TOOL_ROUNDS tool rounds, a final force-text call is made without tools."""
+        first = make_tool_use_response("search_course_content", {"query": "q1"}, "toolu_020")
+        second = make_tool_use_response("search_course_content", {"query": "q2"}, "toolu_021")
+        # Claude still wants tools after round 2 — should be ignored and force-text call made
+        third = make_tool_use_response("search_course_content", {"query": "q3"}, "toolu_022")
+        fourth = make_text_response("Forced final answer.")
+
+        with patch.object(generator.client.messages, "create",
+                          side_effect=[first, second, third, fourth]) as mock_create:
+            result = generator.generate_response(
+                query="complex query",
+                tools=TOOL_DEFS,
+                tool_manager=mock_tool_manager,
+            )
+
+        assert mock_create.call_count == 4
+        assert mock_tool_manager.execute_tool.call_count == 2
+        assert result == "Forced final answer."
+        # Force-text call (4th) must not include tools
+        assert "tools" not in mock_create.call_args_list[3][1]
+
+    def test_tool_execution_error_included_in_results(self, generator, mock_tool_manager):
+        """A tool execution exception is caught and injected as error text; the round continues."""
+        mock_tool_manager.execute_tool.side_effect = Exception("DB offline")
+
+        first = make_tool_use_response(
+            "search_course_content", {"query": "test"}, "toolu_030"
+        )
+        second = make_text_response("Could not retrieve data.")
+
+        with patch.object(generator.client.messages, "create",
+                          side_effect=[first, second]) as mock_create:
+            result = generator.generate_response(
+                query="test",
+                tools=TOOL_DEFS,
+                tool_manager=mock_tool_manager,
+            )
+
+        assert mock_create.call_count == 2
+        assert result == "Could not retrieve data."
+        second_call_messages = mock_create.call_args_list[1][1]["messages"]
+        tool_result_msg = second_call_messages[-1]
+        assert tool_result_msg["role"] == "user"
+        content = tool_result_msg["content"]
+        assert any(
+            block.get("type") == "tool_result"
+            and "Error executing tool" in block.get("content", "")
+            and "DB offline" in block.get("content", "")
+            for block in content
+        )
 
 
 # ── Tests: error / edge cases ─────────────────────────────────────────────────
