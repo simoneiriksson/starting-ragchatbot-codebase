@@ -1,0 +1,12 @@
+{
+  "name": "course-materials-assistant-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write \"*.html\" \"*.css\" \"*.js\"",
+    "format:check": "prettier --check \"*.html\" \"*.css\" \"*.js\""
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2"
+  }
+}
